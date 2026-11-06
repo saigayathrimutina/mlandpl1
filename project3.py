@@ -2,11 +2,12 @@
 # ==========================================================
 # STUDENT DROPOUT RISK PREDICTION
 # Logistic Regression vs Random Forest
-# GitHub Compatible Version
+# GitHub + Streamlit + Excel Dataset
 # ==========================================================
 
 # ----- 1. Import Libraries -----
 
+import streamlit as st
 import numpy as np
 import pandas as pd
 
@@ -36,25 +37,60 @@ from sklearn.metrics import (
     classification_report
 )
 
+# ----- 2. Streamlit Page Configuration -----
+
+st.set_page_config(
+    page_title="Student Dropout Risk Prediction",
+    page_icon="🎓",
+    layout="wide"
+)
+
+st.title("🎓 Student Dropout Risk Prediction")
+
+st.subheader(
+    "Logistic Regression vs Random Forest"
+)
+
+st.write(
+    "This project predicts student dropout risk "
+    "using Machine Learning algorithms."
+)
+
 SEED = 42
 
-# ----- 2. Load Dataset -----
+# ----- 3. Load Excel Dataset -----
 
-DATA_FILE = Path("student_dropout_dataset.csv")
+BASE_DIR = Path(__file__).resolve().parent
+
+DATA_FILE = BASE_DIR / "student_dropout_predictions.xlsx"
 
 if not DATA_FILE.exists():
-    raise FileNotFoundError(
-        "Dataset not found! Place student_dropout_dataset.csv "
-        "in the same folder as main.py."
+    st.error(
+        f"Excel dataset not found: {DATA_FILE.name}"
     )
+    st.stop()
 
-raw = pd.read_csv(DATA_FILE)
+try:
+    raw = pd.read_excel(DATA_FILE)
 
-print("\nDataset loaded successfully!")
-print("Dataset shape:", raw.shape)
-print(raw.head())
+except Exception as e:
+    st.error(f"Error reading Excel file: {e}")
+    st.stop()
 
-# ----- 3. Required Columns -----
+st.success("Dataset loaded successfully!")
+
+st.write("### Dataset Information")
+
+col1, col2 = st.columns(2)
+
+col1.metric("Total Rows", raw.shape[0])
+col2.metric("Total Columns", raw.shape[1])
+
+st.write("### Dataset Preview")
+
+st.dataframe(raw.head(10), use_container_width=True)
+
+# ----- 4. Required Columns -----
 
 REQUIRED = [
     "student_id",
@@ -77,14 +113,18 @@ REQUIRED = [
     "dropout"
 ]
 
-missing = [c for c in REQUIRED if c not in raw.columns]
+missing = [
+    c for c in REQUIRED
+    if c not in raw.columns
+]
 
 if missing:
-    raise ValueError(
+    st.error(
         f"Missing required columns: {missing}"
     )
+    st.stop()
 
-# ----- 4. Cleaning -----
+# ----- 5. Data Cleaning -----
 
 n_raw = len(raw)
 
@@ -100,15 +140,19 @@ missing_by_col = {
     if v > 0
 }
 
-print("\nDATA CLEANING REPORT")
+st.write("### Data Cleaning Report")
 
-print("Original rows:", n_raw)
-print("Duplicate rows:", n_dup)
-print("Rows after cleaning:", len(df))
-print("Total missing values:", n_missing)
-print("Missing values by column:", missing_by_col)
+clean1, clean2, clean3 = st.columns(3)
 
-# ----- 5. Feature Engineering -----
+clean1.metric("Original Rows", n_raw)
+clean2.metric("Duplicate Rows", n_dup)
+clean3.metric("Rows After Cleaning", len(df))
+
+st.write("Total Missing Values:", n_missing)
+
+st.write("Missing Values by Column:", missing_by_col)
+
+# ----- 6. Feature Engineering -----
 
 df["sgpa_trend"] = (
     df["sgpa_sem2"] - df["sgpa_sem1"]
@@ -142,7 +186,7 @@ cat = [
     "family_income"
 ]
 
-# ----- 6. Prepare Input and Target -----
+# ----- 7. Prepare Input and Target -----
 
 df["dropout"] = pd.to_numeric(
     df["dropout"],
@@ -154,22 +198,25 @@ df = df.dropna(
 ).reset_index(drop=True)
 
 if not set(df["dropout"].unique()).issubset({0, 1}):
-    raise ValueError(
-        "Dropout must contain only 0 and 1."
+    st.error(
+        "Dropout column must contain only 0 and 1."
     )
+    st.stop()
 
 df["dropout"] = df["dropout"].astype(int)
 
 if df["dropout"].nunique() != 2:
-    raise ValueError(
-        "Both dropout classes are required."
+    st.error(
+        "Both dropout classes (0 and 1) are required."
     )
+    st.stop()
 
 if df["dropout"].value_counts().min() < 5:
-    raise ValueError(
-        "At least 5 students in each dropout class "
+    st.error(
+        "At least 5 records in each dropout class "
         "are required for 5-fold cross-validation."
     )
+    st.stop()
 
 X = df[num + cat]
 
@@ -177,7 +224,7 @@ y = df["dropout"]
 
 ids = df["student_id"]
 
-# ----- 7. Train-Test Split -----
+# ----- 8. Train-Test Split -----
 
 Xtr, Xte, ytr, yte, idtr, idte = train_test_split(
     X,
@@ -188,7 +235,7 @@ Xtr, Xte, ytr, yte, idtr, idte = train_test_split(
     random_state=SEED
 )
 
-# ----- 8. Data Preprocessing -----
+# ----- 9. Data Preprocessing -----
 
 def prep(scale):
 
@@ -228,7 +275,7 @@ def prep(scale):
         )
     ])
 
-# ----- 9. Cross Validation -----
+# ----- 10. Cross Validation -----
 
 cv = StratifiedKFold(
     n_splits=5,
@@ -236,71 +283,73 @@ cv = StratifiedKFold(
     random_state=SEED
 )
 
-# ----- 10. Logistic Regression -----
+# ----- 11. Logistic Regression -----
 
-lr_pipe = Pipeline([
-    ("prep", prep(True)),
-    (
-        "m",
-        LogisticRegression(
-            class_weight="balanced",
-            max_iter=2000
+with st.spinner("Training Logistic Regression..."):
+
+    lr_pipe = Pipeline([
+        ("prep", prep(True)),
+        (
+            "m",
+            LogisticRegression(
+                class_weight="balanced",
+                max_iter=2000
+            )
         )
+    ])
+
+    lr_grid = {
+        "m__C": [0.01, 0.1, 1, 10]
+    }
+
+    lr = GridSearchCV(
+        lr_pipe,
+        lr_grid,
+        scoring="roc_auc",
+        cv=cv,
+        n_jobs=-1
     )
-])
 
-lr_grid = {
-    "m__C": [0.01, 0.1, 1, 10]
-}
+    lr.fit(Xtr, ytr)
 
-lr = GridSearchCV(
-    lr_pipe,
-    lr_grid,
-    scoring="roc_auc",
-    cv=cv,
-    n_jobs=-1
-)
+st.success("Logistic Regression training completed!")
 
-lr.fit(Xtr, ytr)
+# ----- 12. Random Forest -----
 
-print("\nLogistic Regression training completed!")
+with st.spinner("Training Random Forest..."):
 
-# ----- 11. Random Forest -----
-
-rf_pipe = Pipeline([
-    ("prep", prep(False)),
-    (
-        "m",
-        RandomForestClassifier(
-            class_weight="balanced_subsample",
-            random_state=SEED,
-            n_jobs=1
+    rf_pipe = Pipeline([
+        ("prep", prep(False)),
+        (
+            "m",
+            RandomForestClassifier(
+                class_weight="balanced_subsample",
+                random_state=SEED,
+                n_jobs=1
+            )
         )
+    ])
+
+    rf_grid = {
+        "m__n_estimators": [100, 200],
+        "m__max_depth": [6, None],
+        "m__min_samples_leaf": [1, 5]
+    }
+
+    rf = GridSearchCV(
+        rf_pipe,
+        rf_grid,
+        scoring="roc_auc",
+        cv=cv,
+        n_jobs=1,
+        verbose=1
     )
-])
 
-rf_grid = {
-    "m__n_estimators": [100, 200],
-    "m__max_depth": [6, None],
-    "m__min_samples_leaf": [1, 5]
-}
+    rf.fit(Xtr, ytr)
 
-rf = GridSearchCV(
-    rf_pipe,
-    rf_grid,
-    scoring="roc_auc",
-    cv=cv,
-    n_jobs=1,
-    verbose=1
-)
+st.success("Random Forest training completed!")
 
-rf.fit(Xtr, ytr)
-
-print("\nRandom Forest training completed!")
-
-print("Best parameters:", rf.best_params_)
-
-# ----- 12. Model Evaluation -----
+# ----- 13. Model Evaluation -----
 
 def evaluate(model):
 
@@ -342,7 +391,9 @@ res_lr, p_lr = evaluate(lr)
 
 res_rf, p_rf = evaluate(rf)
 
-# ----- 13. Display Results -----
+# ----- 14. Display Model Performance -----
+
+st.write("## Model Performance Comparison")
 
 results = pd.DataFrame(
     [res_lr, res_rf],
@@ -352,35 +403,42 @@ results = pd.DataFrame(
     ]
 )
 
-print("\nMODEL PERFORMANCE")
+st.dataframe(
+    results.round(4),
+    use_container_width=True
+)
 
-print(results.round(4))
+st.write("### Best Model Parameters")
 
-print("\nBest Logistic Regression Parameters:")
-print(lr.best_params_)
+st.write("Logistic Regression:", lr.best_params_)
 
-print("\nBest Random Forest Parameters:")
-print(rf.best_params_)
+st.write("Random Forest:", rf.best_params_)
 
-# ----- 14. Classification Report -----
+# ----- 15. Classification Reports -----
 
-print("\nLOGISTIC REGRESSION REPORT")
+st.write("## Classification Reports")
 
-print(classification_report(
-    yte,
-    (p_lr >= 0.5).astype(int),
-    zero_division=0
-))
+with st.expander("Logistic Regression Report"):
 
-print("\nRANDOM FOREST REPORT")
+    st.text(
+        classification_report(
+            yte,
+            (p_lr >= 0.5).astype(int),
+            zero_division=0
+        )
+    )
 
-print(classification_report(
-    yte,
-    (p_rf >= 0.5).astype(int),
-    zero_division=0
-))
+with st.expander("Random Forest Report"):
 
-# ----- 15. Risk Bands -----
+    st.text(
+        classification_report(
+            yte,
+            (p_rf >= 0.5).astype(int),
+            zero_division=0
+        )
+    )
+
+# ----- 16. Risk Bands -----
 
 def band(p):
 
@@ -390,22 +448,24 @@ def band(p):
         else "High"
     )
 
-# ----- 16. Select Best Model -----
+# ----- 17. Select Best Model -----
 
 best_model = (
     rf if res_rf["auc"] >= res_lr["auc"]
     else lr
 )
 
-print("\nSelected Model:")
-
-print(
+selected_name = (
     "Random Forest"
     if best_model is rf
     else "Logistic Regression"
 )
 
-# ----- 17. Student Risk Prediction -----
+st.write("## Selected Best Model")
+
+st.success(selected_name)
+
+# ----- 18. Student Risk Prediction -----
 
 probabilities = best_model.predict_proba(Xte)[:, 1]
 
@@ -422,21 +482,35 @@ predictions = pd.DataFrame({
     ]
 })
 
-print("\nSTUDENT DROPOUT RISK PREDICTIONS")
+st.write("## Student Dropout Risk Predictions")
 
-print(
-    predictions.head(20).to_string(index=False)
+st.dataframe(
+    predictions.head(20),
+    use_container_width=True
 )
 
-# ----- 18. Risk Summary -----
+# ----- 19. Risk Level Summary -----
 
-print("\nRISK LEVEL SUMMARY")
+st.write("## Risk Level Summary")
 
-print(
-    predictions["risk_level"].value_counts()
+risk_counts = (
+    predictions["risk_level"]
+    .value_counts()
+    .reindex(
+        ["Low", "Medium", "High"],
+        fill_value=0
+    )
 )
 
-# ----- 19. Save Results -----
+risk1, risk2, risk3 = st.columns(3)
+
+risk1.metric("Low Risk", int(risk_counts["Low"]))
+risk2.metric("Medium Risk", int(risk_counts["Medium"]))
+risk3.metric("High Risk", int(risk_counts["High"]))
+
+st.bar_chart(risk_counts)
+
+# ----- 20. Save and Download Results -----
 
 predictions.to_csv(
     "student_dropout_predictions.csv",
@@ -447,8 +521,24 @@ results.to_csv(
     "model_performance.csv"
 )
 
-print("\nBoth result files saved successfully!")
+st.write("## Download Project Results")
 
-# ----- 20. Project Completed -----
+st.download_button(
+    label="Download Student Risk Predictions",
+    data=predictions.to_csv(index=False).encode("utf-8"),
+    file_name="student_dropout_predictions.csv",
+    mime="text/csv"
+)
 
-print("\nPROJECT COMPLETED SUCCESSFULLY!")
+st.download_button(
+    label="Download Model Performance",
+    data=results.to_csv().encode("utf-8"),
+    file_name="model_performance.csv",
+    mime="text/csv"
+)
+
+st.success("PROJECT COMPLETED SUCCESSFULLY!")
+
+
+
+
